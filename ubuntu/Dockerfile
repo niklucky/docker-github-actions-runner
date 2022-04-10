@@ -1,89 +1,34 @@
-ARG FROM=debian:buster-slim
-FROM ${FROM}
+# base
+FROM ubuntu:20.04
 
-ARG DEBIAN_FRONTEND=noninteractive
-ARG GIT_VERSION="2.26.2"
-ARG GH_RUNNER_VERSION
-ARG DOCKER_COMPOSE_VERSION="1.27.4"
+# set the github runner version
+ARG RUNNER_VERSION="2.289.2"
 
-ENV RUNNER_NAME=""
-ENV RUNNER_WORK_DIRECTORY="_work"
-ENV RUNNER_TOKEN=""
-ENV RUNNER_REPOSITORY_URL=""
-ENV RUNNER_LABELS=""
-ENV RUNNER_ALLOW_RUNASROOT=true
-ENV GITHUB_ACCESS_TOKEN=""
-ENV AGENT_TOOLSDIRECTORY=/opt/hostedtoolcache
+# update the base packages and add a non-sudo user
+RUN apt-get update -y && apt-get upgrade -y && useradd -m docker
 
-# Labels.
-LABEL maintainer="iam@niklucky.com" \
-    org.label-schema.schema-version="1.0" \
-    org.label-schema.build-date=$BUILD_DATE \
-    org.label-schema.vcs-ref=$VCS_REF \
-    org.label-schema.name="niklucky/docker-github-actions-runner" \
-    org.label-schema.description="Dockerized GitHub Actions runner." \
-    org.label-schema.url="https://github.com/niklucky/docker-github-actions-runner" \
-    org.label-schema.vcs-url="https://github.com/niklucky/docker-github-actions-runner" \
-    org.label-schema.vendor="Nikita Zhuravlev" \
-    org.label-schema.docker.cmd="docker run -it niklucky/docker-github-actions-runner:latest"
+# install python and the packages the your code depends on along with jq so we can parse JSON
+# add additional packages as necessary
+RUN DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    curl jq build-essential libssl-dev libffi-dev python3 python3-venv python3-dev python3-pip
 
-RUN DEBIAN_FRONTEND=noninteractive apt-get update && \
-    apt-get install -y \
-        curl \
-        unzip \
-        apt-transport-https \
-        ca-certificates \
-        software-properties-common \
-        sudo \
-        supervisor \
-        jq \
-        iputils-ping \
-        build-essential \
-        zlib1g-dev \
-        gettext \
-        liblttng-ust0 \
-        libcurl4-openssl-dev \
-        openssh-client && \
-    rm -rf /var/lib/apt/lists/* && \
-    apt-get clean
+# cd into the user directory, download and unzip the github actions runner
+RUN cd /home/docker && mkdir actions-runner && cd actions-runner \
+    && curl -O -L https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz \
+    && tar xzf ./actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz
 
-COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
-RUN chmod 644 /etc/supervisor/conf.d/supervisord.conf
+# install some additional dependencies
+RUN chown -R docker ~/docker && /home/docker/actions-runner/bin/installdependencies.sh
 
-# Install Docker CLI
-RUN curl -fsSL https://get.docker.com -o- | sh && \
-    rm -rf /var/lib/apt/lists/* && \
-    apt-get clean
+# copy over the start.sh script
+COPY start.sh start.sh
 
-# Install Docker-Compose
-RUN curl -L -o /usr/local/bin/docker-compose \
-    "https://github.com/docker/compose/releases/download/${DOCKER_COMPOSE_VERSION}/docker-compose-$(uname -s)-$(uname -m)" && \
-    chmod +x /usr/local/bin/docker-compose
+# make the script executable
+RUN chmod +x start.sh
 
-RUN cd /tmp && \
-    curl -sL -o git.tgz \
-    https://www.kernel.org/pub/software/scm/git/git-${GIT_VERSION}.tar.gz && \
-    tar zxf git.tgz  && \
-    cd git-${GIT_VERSION}  && \
-    ./configure --prefix=/usr  && \
-    make && \
-    make install && \
-    rm -rf /tmp/*
+# since the config and run script for actions are not allowed to be run by root,
+# set the user to "docker" so all subsequent commands are run as the docker user
+USER docker
 
-RUN mkdir -p /home/runner ${AGENT_TOOLSDIRECTORY}
-
-WORKDIR /home/runner
-
-RUN GH_RUNNER_VERSION=${GH_RUNNER_VERSION:-$(curl --silent "https://api.github.com/repos/actions/runner/releases/latest" | grep tag_name | sed -E 's/.*"v([^"]+)".*/\1/')} \
-    && curl -L -O https://github.com/actions/runner/releases/download/v${GH_RUNNER_VERSION}/actions-runner-linux-x64-${GH_RUNNER_VERSION}.tar.gz \
-    && tar -zxf actions-runner-linux-x64-${GH_RUNNER_VERSION}.tar.gz \
-    && rm -f actions-runner-linux-x64-${GH_RUNNER_VERSION}.tar.gz \
-    && ./bin/installdependencies.sh \
-    && chown -R root: /home/runner \
-    && rm -rf /var/lib/apt/lists/* \
-    && apt-get clean
-
-COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
-ENTRYPOINT ["/entrypoint.sh"]
-CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
+# set the entrypoint to the start.sh script
+ENTRYPOINT ["./start.sh"]

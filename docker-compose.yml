@@ -4,9 +4,7 @@ services:
     runner:
       image: syndicatedb/github-runner:latest
       environment:
-        RUNNER_NAME: "syndicate-runner"
-        RUNNER_REPOSITORY_URL: "https://github.com/your-account-or-organization"
-        RUNNER_LABELS: "ubuntu"
-        RUNNER_TOKEN: "RUNNER_TOKEN"
+        ORGANIZATION: "your-account-or-organization"
+        ACCESS_TOKEN: "RUNNER_TOKEN"
       volumes:
         - /var/run/docker.sock:/var/run/docker.sock
